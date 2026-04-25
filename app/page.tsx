@@ -47,7 +47,7 @@ export default function OzsolLanding() {
     return () => clearInterval(interval);
   }, []);
 
-  // Canvas O2 molecule animation — scaled up and shifted upward to sit
+  // Canvas O2 molecule animation - scaled up and shifted upward to sit
   // behind the wordmark rather than between wordmark and tagline.
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -117,7 +117,7 @@ export default function OzsolLanding() {
         ctx.fill();
       }
 
-      // Molecule centre — sits ABOVE viewport centre so it's behind the
+      // Molecule centre - sits ABOVE viewport centre so it's behind the
       // wordmark, not between wordmark and tagline. The wordmark sits at
       // roughly 45% of viewport height in the hero; place the molecule
       // there so it surrounds the wordmark.
@@ -129,7 +129,7 @@ export default function OzsolLanding() {
 
       rotation += 0.002;
 
-      // Larger bond length and orbital radius — molecule envelops the
+      // Larger bond length and orbital radius - molecule envelops the
       // wordmark area instead of sitting inside the tagline gap.
       const bondLength = Math.min(w, h) * 0.42;
       const baseRadius = Math.min(w, h) * 0.16;
@@ -152,7 +152,7 @@ export default function OzsolLanding() {
       const n1 = project(-bondLength, 0, 0);
       const n2 = project(bondLength, 0, 0);
 
-      // Bond between the two nuclei (double bond — two parallel lines)
+      // Bond between the two nuclei (double bond - two parallel lines)
       // Lower opacity since the molecule is now ambient backdrop rather
       // than focal element.
       ctx.strokeStyle = 'rgba(186, 230, 253, 0.08)';
@@ -230,7 +230,7 @@ export default function OzsolLanding() {
           ctx.fill();
         }
 
-        // Nucleus core — softer glow, smaller hard core
+        // Nucleus core - softer glow, smaller hard core
         const coreRadius = baseRadius * 0.22 * nucleus.scale;
         const coreGrad = ctx.createRadialGradient(
           nucleus.x,
@@ -517,7 +517,7 @@ export default function OzsolLanding() {
           <div className="hidden md:block absolute right-8 top-1/2 -translate-y-1/2">
             <div className="mono text-xs tracking-widest uppercase opacity-50 [writing-mode:vertical-rl]">
               <span className="opacity-100">●</span>
-              <span className="ml-2">O₂ — Foundational</span>
+              <span className="ml-2">O₂ - Foundational</span>
             </div>
           </div>
 
@@ -560,7 +560,7 @@ export default function OzsolLanding() {
               <div className="grid grid-cols-12 gap-8">
                 <div className="col-span-12 md:col-span-2">
                   <span className="mono text-xs tracking-widest uppercase opacity-50">
-                    /01 — Premise
+                    /01 - Premise
                   </span>
                 </div>
                 <div className="col-span-12 md:col-span-10">
@@ -574,7 +574,7 @@ export default function OzsolLanding() {
                   <div className="mt-12 grid grid-cols-1 md:grid-cols-2 gap-12 max-w-4xl">
                     <p className="text-lg leading-relaxed opacity-70">
                       Ozsol builds for the second category. Regulated
-                      practice, healthcare, infrastructural data — domains
+                      practice, healthcare, infrastructural data - domains
                       where a missing record is not a metric, it is a
                       person whose case fell through.
                     </p>
@@ -598,7 +598,7 @@ export default function OzsolLanding() {
               <div className="grid grid-cols-12 gap-8 mb-16">
                 <div className="col-span-12 md:col-span-2">
                   <span className="mono text-xs tracking-widest uppercase opacity-50">
-                    /02 — Domains
+                    /02 - Domains
                   </span>
                 </div>
                 <div className="col-span-12 md:col-span-10">
@@ -647,7 +647,7 @@ export default function OzsolLanding() {
               <div className="grid grid-cols-12 gap-8">
                 <div className="col-span-12 md:col-span-2">
                   <span className="mono text-xs tracking-widest uppercase opacity-50">
-                    /03 — Method
+                    /03 - Method
                   </span>
                 </div>
                 <div className="col-span-12 md:col-span-10">
@@ -670,7 +670,7 @@ export default function OzsolLanding() {
                     <Principle
                       n="iv."
                       title="Australia first, by design"
-                      body="Headquartered in Melbourne. Compliant with Australian regulatory frameworks from day one. Data residency is not a setting — it is the default."
+                      body="Headquartered in Melbourne. Compliant with Australian regulatory frameworks from day one. Data residency is not a setting - it is the default."
                     />
                   </div>
                 </div>
@@ -696,7 +696,7 @@ export default function OzsolLanding() {
               <div className="grid grid-cols-12 gap-8">
                 <div className="col-span-12 md:col-span-2">
                   <span className="mono text-xs tracking-widest uppercase opacity-50">
-                    /04 — Contact
+                    /04 - Contact
                   </span>
                 </div>
                 <div className="col-span-12 md:col-span-10">
@@ -745,10 +745,10 @@ export default function OzsolLanding() {
               </div>
               <div className="mono text-xs tracking-widest uppercase opacity-60 flex items-center gap-2">
                 <span className="blink">●</span>
-                <span>System operational — Melbourne {time}</span>
+                <span>System operational - Melbourne {time}</span>
               </div>
               <div className="mono text-xs tracking-widest uppercase opacity-40">
-                © {new Date().getFullYear()} — All ventures reserved
+                © {new Date().getFullYear()} - All ventures reserved
               </div>
             </div>
           </footer>
