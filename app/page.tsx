@@ -6,7 +6,7 @@ import { ArrowUpRight } from 'lucide-react';
 export default function OzsolLanding() {
   const [mousePos, setMousePos] = useState({ x: 0.5, y: 0.5 });
   const [time, setTime] = useState('');
-  const canvasRef = useRef(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mouseRef = useRef({ x: 0.5, y: 0.5 });
 
   useEffect(() => {
@@ -52,10 +52,21 @@ export default function OzsolLanding() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d')!;
-    let animationId;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let animationId: number;
     let rotation = 0;
-    let dust = [];
+    type Dust = {
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      r: number;
+      alpha: number;
+      phase: number;
+    };
+    let dust: Dust[] = [];
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -86,8 +97,6 @@ export default function OzsolLanding() {
     };
     initDust();
 
-    // O2 molecule: two oxygen nuclei + their electron orbitals
-    // Centred in viewport. Each nucleus has electrons orbiting in 3D ellipses.
     const draw = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
@@ -113,30 +122,24 @@ export default function OzsolLanding() {
       const cx = w / 2;
       const cy = h / 2;
 
-      // Mouse-driven tilt of the whole molecule
-      const tiltX = (mouseRef.current.x - 0.5) * 0.3; // yaw
-      const tiltY = (mouseRef.current.y - 0.5) * 0.2; // pitch
+      const tiltX = (mouseRef.current.x - 0.5) * 0.3;
+      const tiltY = (mouseRef.current.y - 0.5) * 0.2;
 
       rotation += 0.002;
 
-      // Two oxygen nuclei positions, separated along x in molecule-local space
       const bondLength = Math.min(w, h) * 0.18;
       const baseRadius = Math.min(w, h) * 0.07;
 
-      // Apply tilt: rotate the bond axis
       const cosY = Math.cos(tiltX);
       const sinY = Math.sin(tiltX);
       const cosP = Math.cos(tiltY);
       const sinP = Math.sin(tiltY);
 
-      // Nucleus positions (originally on x-axis)
       const project = (lx: number, ly: number, lz: number) => {
-        // Yaw rotation around y-axis
-        let x1 = lx * cosY + lz * sinY;
-        let z1 = -lx * sinY + lz * cosY;
-        // Pitch rotation around x-axis
-        let y2 = ly * cosP - z1 * sinP;
-        let z2 = ly * sinP + z1 * cosP;
+        const x1 = lx * cosY + lz * sinY;
+        const z1 = -lx * sinY + lz * cosY;
+        const y2 = ly * cosP - z1 * sinP;
+        const z2 = ly * sinP + z1 * cosP;
         const perspective = 800;
         const scale = perspective / (perspective + z2);
         return { x: cx + x1 * scale, y: cy + y2 * scale, scale, z: z2 };
@@ -145,13 +148,7 @@ export default function OzsolLanding() {
       const n1 = project(-bondLength, 0, 0);
       const n2 = project(bondLength, 0, 0);
 
-      // Sort by depth so far one renders first
-      const nuclei = [
-        { ...n1, color: 'rgba(34, 211, 238' },
-        { ...n2, color: 'rgba(139, 92, 246' },
-      ].sort((a, b) => b.z - a.z);
-
-      // ---- Bond between the two nuclei (double bond — two parallel lines) ----
+      // Bond between the two nuclei (double bond — two parallel lines)
       ctx.strokeStyle = 'rgba(186, 230, 253, 0.15)';
       ctx.lineWidth = 1;
       const bondOffset = 6;
@@ -164,30 +161,34 @@ export default function OzsolLanding() {
       ctx.lineTo(n2.x, n2.y + bondOffset);
       ctx.stroke();
 
-      // ---- For each nucleus: draw electron orbital rings + electrons ----
-      const drawNucleus = (
-        nucleus: { x: number; y: number; scale: number; z: number; color: string },
-        originLocal: number[]
-      ) => {
-        // Orbital rings — three orbital planes per nucleus
+      type Nucleus = {
+        x: number;
+        y: number;
+        scale: number;
+        z: number;
+        color: string;
+      };
+
+      const drawNucleus = (nucleus: Nucleus, originLocal: [number, number, number]) => {
         const ringCount = 3;
         for (let r = 0; r < ringCount; r++) {
           const ringAngle = (Math.PI / ringCount) * r + rotation * (r === 1 ? -1 : 1);
-          // Sample around the ellipse
           const samples = 60;
           ctx.beginPath();
           for (let s = 0; s <= samples; s++) {
             const ang = (Math.PI * 2 * s) / samples;
-            // Local ellipse in nucleus-local coords (centred at origin)
             const lx = Math.cos(ang) * baseRadius;
             const ly = Math.sin(ang) * baseRadius * 0.35;
-            // Rotate the ring plane around its own y-axis
             const rx = lx * Math.cos(ringAngle) - ly * Math.sin(ringAngle);
             const ry = lx * Math.sin(ringAngle) + ly * Math.cos(ringAngle);
-            // Translate to nucleus centre in molecule space
             const wx = originLocal[0] + rx;
             const wy = originLocal[1] + ry;
-            const wz = originLocal[2] + (Math.sin(ang) * Math.cos(ringAngle) - Math.cos(ang) * Math.sin(ringAngle)) * baseRadius * 0.35;
+            const wz =
+              originLocal[2] +
+              (Math.sin(ang) * Math.cos(ringAngle) -
+                Math.cos(ang) * Math.sin(ringAngle)) *
+                baseRadius *
+                0.35;
             const p = project(wx, wy, wz);
             if (s === 0) ctx.moveTo(p.x, p.y);
             else ctx.lineTo(p.x, p.y);
@@ -196,7 +197,6 @@ export default function OzsolLanding() {
           ctx.lineWidth = 0.8;
           ctx.stroke();
 
-          // Place an electron travelling around this orbital
           const electronAng = rotation * (r + 1) * 1.5 + r * 2;
           const lx = Math.cos(electronAng) * baseRadius;
           const ly = Math.sin(electronAng) * baseRadius * 0.35;
@@ -207,7 +207,6 @@ export default function OzsolLanding() {
           const wz = originLocal[2];
           const p = project(wx, wy, wz);
 
-          // Glowing electron
           const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 8 * p.scale);
           grad.addColorStop(0, nucleus.color + ', 1)');
           grad.addColorStop(0.5, nucleus.color + ', 0.4)');
@@ -223,7 +222,6 @@ export default function OzsolLanding() {
           ctx.fill();
         }
 
-        // Nucleus core — soft glow
         const coreRadius = baseRadius * 0.32 * nucleus.scale;
         const coreGrad = ctx.createRadialGradient(
           nucleus.x,
@@ -241,22 +239,13 @@ export default function OzsolLanding() {
         ctx.arc(nucleus.x, nucleus.y, coreRadius * 3, 0, Math.PI * 2);
         ctx.fill();
 
-        // Nucleus core hard
         ctx.fillStyle = nucleus.color + ', 0.85)';
         ctx.beginPath();
         ctx.arc(nucleus.x, nucleus.y, coreRadius, 0, Math.PI * 2);
         ctx.fill();
       };
 
-      // Draw far one first, then near one
-      const farFirst = nuclei[0].z < nuclei[1].z ? nuclei : [nuclei[1], nuclei[0]];
-      const localPositions = [
-        n1.z >= n2.z ? [-bondLength, 0, 0] : [bondLength, 0, 0],
-        n1.z >= n2.z ? [bondLength, 0, 0] : [-bondLength, 0, 0],
-      ];
-
-      // Sort with explicit local position pairing
-      const pairs = [
+      const pairs: { proj: typeof n1; local: [number, number, number]; color: string }[] = [
         { proj: n1, local: [-bondLength, 0, 0], color: 'rgba(34, 211, 238' },
         { proj: n2, local: [bondLength, 0, 0], color: 'rgba(139, 92, 246' },
       ].sort((a, b) => b.proj.z - a.proj.z);
@@ -463,7 +452,6 @@ export default function OzsolLanding() {
     }
   `;
 
-  // Subtle parallax for the wordmark based on mouse — much softer than canvas
   const heroX = (mousePos.x - 0.5) * 8;
   const heroY = (mousePos.y - 0.5) * 5;
 
@@ -471,7 +459,6 @@ export default function OzsolLanding() {
     <div className="ozsol-root">
       <style>{styles}</style>
 
-      {/* Aurora background — slowest layer */}
       <div className="aurora-container">
         <div className="aurora-blob blob-1"></div>
         <div className="aurora-blob blob-2"></div>
@@ -479,15 +466,12 @@ export default function OzsolLanding() {
         <div className="aurora-blob blob-4"></div>
       </div>
 
-      {/* Canvas O2 molecule animation — sits between aurora and content */}
       <canvas ref={canvasRef} className="hero-canvas" />
 
-      {/* Grain + vignette on top of everything atmospheric */}
       <div className="grain"></div>
       <div className="vignette"></div>
 
       <div className="relative z-10">
-        {/* Top nav */}
         <nav className="fixed top-0 left-0 right-0 z-50 px-8 py-6 flex items-center justify-between mix-blend-difference">
           <div className="reveal reveal-1 mono text-xs tracking-widest uppercase flex items-center gap-2">
             <svg width="14" height="14" viewBox="0 0 24 24" className="orbit-spin">
@@ -508,9 +492,7 @@ export default function OzsolLanding() {
           </div>
         </nav>
 
-        {/* Hero — wordmark sits over the canvas molecule */}
         <section className="min-h-screen relative flex flex-col justify-center px-8 md:px-16">
-          {/* Side rail */}
           <div className="hidden md:flex absolute left-8 top-1/2 -translate-y-1/2 flex-col items-center gap-4">
             <div className="marker-line h-32"></div>
             <span className="mono text-xs tracking-widest uppercase opacity-50 [writing-mode:vertical-rl] rotate-180">
@@ -526,7 +508,6 @@ export default function OzsolLanding() {
             </div>
           </div>
 
-          {/* Wordmark */}
           <div
             className="reveal reveal-2 mx-auto wordmark-shadow"
             style={{
@@ -546,7 +527,7 @@ export default function OzsolLanding() {
             <p className="serif italic text-3xl md:text-4xl lg:text-5xl leading-[1.05] opacity-95 wordmark-shadow">
               Software for industries
               <br className="hidden md:block" />
-              that don't get to fail.
+              that don&apos;t get to fail.
             </p>
           </div>
 
@@ -560,10 +541,7 @@ export default function OzsolLanding() {
           </div>
         </section>
 
-        {/* Everything below the hero gets a darker backdrop so the canvas
-            doesn't fight the content */}
         <div className="content-bg">
-          {/* Premise */}
           <section className="relative px-8 md:px-16 py-32 md:py-48">
             <div className="max-w-6xl mx-auto">
               <div className="grid grid-cols-12 gap-8">
@@ -602,7 +580,6 @@ export default function OzsolLanding() {
 
           <div className="marker-line-h max-w-6xl mx-auto"></div>
 
-          {/* Domains */}
           <section className="relative px-8 md:px-16 py-32 md:py-48">
             <div className="max-w-6xl mx-auto">
               <div className="grid grid-cols-12 gap-8 mb-16">
@@ -652,7 +629,6 @@ export default function OzsolLanding() {
 
           <div className="marker-line-h max-w-6xl mx-auto"></div>
 
-          {/* Method */}
           <section className="relative px-8 md:px-16 py-32 md:py-48">
             <div className="max-w-6xl mx-auto">
               <div className="grid grid-cols-12 gap-8">
@@ -691,7 +667,6 @@ export default function OzsolLanding() {
 
           <div className="marker-line-h max-w-6xl mx-auto"></div>
 
-          {/* Atmosphere strip */}
           <section className="relative px-8 md:px-16 py-24">
             <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-12">
               <FactBlock label="Established" value="2016" />
@@ -703,7 +678,6 @@ export default function OzsolLanding() {
 
           <div className="marker-line-h max-w-6xl mx-auto"></div>
 
-          {/* Contact */}
           <section id="contact" className="relative px-8 md:px-16 py-32 md:py-48">
             <div className="max-w-6xl mx-auto">
               <div className="grid grid-cols-12 gap-8">
@@ -743,7 +717,6 @@ export default function OzsolLanding() {
             </div>
           </section>
 
-          {/* Footer */}
           <footer className="relative px-8 md:px-16 py-12 border-t border-white/5">
             <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
               <div className="flex items-center gap-3">
@@ -773,9 +746,15 @@ export default function OzsolLanding() {
 }
 
 function DomainCard({
-  index, kicker, title, body
+  index,
+  kicker,
+  title,
+  body,
 }: {
-  index: string; kicker: string; title: string; body: string
+  index: string;
+  kicker: string;
+  title: string;
+  body: string;
 }) {
   return (
     <div className="domain-card p-10 md:p-12 group cursor-default relative">
@@ -802,7 +781,15 @@ function DomainCard({
   );
 }
 
-function Principle({ n, title, body }: { n: string; title: string; body: string }) {
+function Principle({
+  n,
+  title,
+  body,
+}: {
+  n: string;
+  title: string;
+  body: string;
+}) {
   return (
     <div className="grid grid-cols-12 gap-4 md:gap-8 group">
       <div className="col-span-2 md:col-span-1">
@@ -818,6 +805,31 @@ function Principle({ n, title, body }: { n: string; title: string; body: string 
           {body}
         </p>
       </div>
+    </div>
+  );
+}
+
+function FactBlock({
+  label,
+  value,
+  pulse = false,
+}: {
+  label: string;
+  value: string;
+  pulse?: boolean;
+}) {
+  return (
+    <div>
+      <span className="mono text-[10px] tracking-[0.25em] uppercase opacity-50 block mb-3">
+        {label}
+      </span>
+      <span
+        className={`serif text-4xl md:text-5xl block tracking-tight ${
+          pulse ? 'number-pulse' : ''
+        }`}
+      >
+        {value}
+      </span>
     </div>
   );
 }
