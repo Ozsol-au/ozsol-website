@@ -245,9 +245,9 @@ export default function OzsolLanding() {
         ctx.fill();
       };
 
-      const pairs: { proj: typeof n1; local: [number, number, number]; color: string }[] = [
-        { proj: n1, local: [-bondLength, 0, 0], color: 'rgba(34, 211, 238' },
-        { proj: n2, local: [bondLength, 0, 0], color: 'rgba(139, 92, 246' },
+      const pairs = [
+        { proj: n1, local: [-bondLength, 0, 0] as [number, number, number], color: 'rgba(34, 211, 238' },
+        { proj: n2, local: [bondLength, 0, 0] as [number, number, number], color: 'rgba(139, 92, 246' },
       ].sort((a, b) => b.proj.z - a.proj.z);
 
       for (const p of pairs) {
@@ -525,7 +525,7 @@ export default function OzsolLanding() {
 
           <div className="reveal reveal-3 mt-12 max-w-3xl mx-auto text-center px-4">
             <p className="serif italic text-3xl md:text-4xl lg:text-5xl leading-[1.05] opacity-95 wordmark-shadow">
-              Software for industries
+              Software for industries 
               <br className="hidden md:block" />
               that don&apos;t get to fail.
             </p>
