@@ -10,7 +10,6 @@ export default function OzsolLanding() {
   const mouseRef = useRef({ x: 0.5, y: 0.5 });
 
   useEffect(() => {
-    // Inject Google Fonts
     const link = document.createElement('link');
     link.href =
       'https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@300;400;500&family=Inter+Tight:wght@300;400;500;600&display=swap';
@@ -48,7 +47,8 @@ export default function OzsolLanding() {
     return () => clearInterval(interval);
   }, []);
 
-  // Canvas O2 molecule animation
+  // Canvas O2 molecule animation — scaled up and shifted upward to sit
+  // behind the wordmark rather than between wordmark and tagline.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -79,7 +79,6 @@ export default function OzsolLanding() {
     resize();
     window.addEventListener('resize', resize);
 
-    // Initialize dust particles (atmospheric specks)
     const initDust = () => {
       dust = [];
       const count = Math.min(180, Math.floor((window.innerWidth * window.innerHeight) / 14000));
@@ -102,7 +101,7 @@ export default function OzsolLanding() {
       const h = window.innerHeight;
       ctx.clearRect(0, 0, w, h);
 
-      // ---- Atmospheric dust ----
+      // Atmospheric dust
       const t = performance.now() * 0.001;
       for (const d of dust) {
         d.x += d.vx;
@@ -118,17 +117,22 @@ export default function OzsolLanding() {
         ctx.fill();
       }
 
-      // ---- O2 Molecule ----
+      // Molecule centre — sits ABOVE viewport centre so it's behind the
+      // wordmark, not between wordmark and tagline. The wordmark sits at
+      // roughly 45% of viewport height in the hero; place the molecule
+      // there so it surrounds the wordmark.
       const cx = w / 2;
-      const cy = h / 2;
+      const cy = h * 0.45;
 
       const tiltX = (mouseRef.current.x - 0.5) * 0.3;
       const tiltY = (mouseRef.current.y - 0.5) * 0.2;
 
       rotation += 0.002;
 
-      const bondLength = Math.min(w, h) * 0.18;
-      const baseRadius = Math.min(w, h) * 0.07;
+      // Larger bond length and orbital radius — molecule envelops the
+      // wordmark area instead of sitting inside the tagline gap.
+      const bondLength = Math.min(w, h) * 0.42;
+      const baseRadius = Math.min(w, h) * 0.16;
 
       const cosY = Math.cos(tiltX);
       const sinY = Math.sin(tiltX);
@@ -140,7 +144,7 @@ export default function OzsolLanding() {
         const z1 = -lx * sinY + lz * cosY;
         const y2 = ly * cosP - z1 * sinP;
         const z2 = ly * sinP + z1 * cosP;
-        const perspective = 800;
+        const perspective = 1200;
         const scale = perspective / (perspective + z2);
         return { x: cx + x1 * scale, y: cy + y2 * scale, scale, z: z2 };
       };
@@ -149,9 +153,11 @@ export default function OzsolLanding() {
       const n2 = project(bondLength, 0, 0);
 
       // Bond between the two nuclei (double bond — two parallel lines)
-      ctx.strokeStyle = 'rgba(186, 230, 253, 0.15)';
+      // Lower opacity since the molecule is now ambient backdrop rather
+      // than focal element.
+      ctx.strokeStyle = 'rgba(186, 230, 253, 0.08)';
       ctx.lineWidth = 1;
-      const bondOffset = 6;
+      const bondOffset = 10;
       ctx.beginPath();
       ctx.moveTo(n1.x, n1.y - bondOffset);
       ctx.lineTo(n2.x, n2.y - bondOffset);
@@ -173,7 +179,7 @@ export default function OzsolLanding() {
         const ringCount = 3;
         for (let r = 0; r < ringCount; r++) {
           const ringAngle = (Math.PI / ringCount) * r + rotation * (r === 1 ? -1 : 1);
-          const samples = 60;
+          const samples = 80;
           ctx.beginPath();
           for (let s = 0; s <= samples; s++) {
             const ang = (Math.PI * 2 * s) / samples;
@@ -193,8 +199,9 @@ export default function OzsolLanding() {
             if (s === 0) ctx.moveTo(p.x, p.y);
             else ctx.lineTo(p.x, p.y);
           }
-          ctx.strokeStyle = nucleus.color + ', 0.18)';
-          ctx.lineWidth = 0.8;
+          // Lower opacity so orbital rings are present but not assertive
+          ctx.strokeStyle = nucleus.color + ', 0.10)';
+          ctx.lineWidth = 0.6;
           ctx.stroke();
 
           const electronAng = rotation * (r + 1) * 1.5 + r * 2;
@@ -207,39 +214,41 @@ export default function OzsolLanding() {
           const wz = originLocal[2];
           const p = project(wx, wy, wz);
 
-          const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 8 * p.scale);
-          grad.addColorStop(0, nucleus.color + ', 1)');
-          grad.addColorStop(0.5, nucleus.color + ', 0.4)');
+          // Slightly smaller, dimmer electrons to reduce focal pull
+          const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 6 * p.scale);
+          grad.addColorStop(0, nucleus.color + ', 0.65)');
+          grad.addColorStop(0.5, nucleus.color + ', 0.25)');
           grad.addColorStop(1, nucleus.color + ', 0)');
           ctx.fillStyle = grad;
           ctx.beginPath();
-          ctx.arc(p.x, p.y, 8 * p.scale, 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, 6 * p.scale, 0, Math.PI * 2);
           ctx.fill();
 
-          ctx.fillStyle = nucleus.color + ', 1)';
+          ctx.fillStyle = nucleus.color + ', 0.7)';
           ctx.beginPath();
-          ctx.arc(p.x, p.y, 1.5 * p.scale, 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, 1.2 * p.scale, 0, Math.PI * 2);
           ctx.fill();
         }
 
-        const coreRadius = baseRadius * 0.32 * nucleus.scale;
+        // Nucleus core — softer glow, smaller hard core
+        const coreRadius = baseRadius * 0.22 * nucleus.scale;
         const coreGrad = ctx.createRadialGradient(
           nucleus.x,
           nucleus.y,
           0,
           nucleus.x,
           nucleus.y,
-          coreRadius * 3
+          coreRadius * 4
         );
-        coreGrad.addColorStop(0, nucleus.color + ', 0.6)');
-        coreGrad.addColorStop(0.4, nucleus.color + ', 0.18)');
+        coreGrad.addColorStop(0, nucleus.color + ', 0.4)');
+        coreGrad.addColorStop(0.4, nucleus.color + ', 0.12)');
         coreGrad.addColorStop(1, nucleus.color + ', 0)');
         ctx.fillStyle = coreGrad;
         ctx.beginPath();
-        ctx.arc(nucleus.x, nucleus.y, coreRadius * 3, 0, Math.PI * 2);
+        ctx.arc(nucleus.x, nucleus.y, coreRadius * 4, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.fillStyle = nucleus.color + ', 0.85)';
+        ctx.fillStyle = nucleus.color + ', 0.55)';
         ctx.beginPath();
         ctx.arc(nucleus.x, nucleus.y, coreRadius, 0, Math.PI * 2);
         ctx.fill();
@@ -445,7 +454,7 @@ export default function OzsolLanding() {
       50% { opacity: 0.7; }
     }
     .wordmark-shadow {
-      text-shadow: 0 0 80px rgba(10, 10, 15, 0.6);
+      text-shadow: 0 0 100px rgba(10, 10, 15, 0.85), 0 0 40px rgba(10, 10, 15, 0.6);
     }
     .content-bg {
       background: linear-gradient(to bottom, transparent 0%, rgba(10, 10, 15, 0.85) 8%, rgba(10, 10, 15, 0.95) 100%);
@@ -472,8 +481,8 @@ export default function OzsolLanding() {
       <div className="vignette"></div>
 
       <div className="relative z-10">
-        <nav className="fixed top-0 left-0 right-0 z-50 px-8 py-6 flex items-center justify-between mix-blend-difference">
-          <div className="reveal reveal-1 mono text-xs tracking-widest uppercase flex items-center gap-2">
+        <nav className="fixed top-0 left-0 right-0 z-50 px-6 md:px-8 py-6 flex items-center justify-between mix-blend-difference gap-4">
+          <div className="reveal reveal-1 mono text-xs tracking-widest uppercase flex items-center gap-2 shrink-0">
             <svg width="14" height="14" viewBox="0 0 24 24" className="orbit-spin">
               <circle cx="12" cy="12" r="2" fill="currentColor" />
               <ellipse cx="12" cy="12" rx="10" ry="4" fill="none" stroke="currentColor" strokeWidth="0.6" />
@@ -482,9 +491,13 @@ export default function OzsolLanding() {
             </svg>
             <span>OZSOL</span>
           </div>
-          <div className="reveal reveal-1 mono text-xs tracking-widest uppercase hidden md:flex items-center gap-8">
-            <span className="opacity-60">Melbourne {time}</span>
-            <span className="opacity-60">EST. 2016</span>
+          <div className="reveal reveal-1 mono text-xs tracking-widest uppercase hidden lg:flex items-center gap-6 xl:gap-8 shrink-0">
+            <span className="opacity-60 whitespace-nowrap">Melbourne {time}</span>
+            <span className="opacity-60 whitespace-nowrap">EST. 2016</span>
+            <a href="#contact" className="underline-grow">Contact</a>
+          </div>
+          <div className="reveal reveal-1 mono text-xs tracking-widest uppercase hidden md:flex lg:hidden items-center gap-4 shrink-0">
+            <span className="opacity-60 whitespace-nowrap">EST. 2016</span>
             <a href="#contact" className="underline-grow">Contact</a>
           </div>
           <div className="reveal reveal-1 mono text-xs tracking-widest uppercase md:hidden">
@@ -509,7 +522,7 @@ export default function OzsolLanding() {
           </div>
 
           <div
-            className="reveal reveal-2 mx-auto wordmark-shadow"
+            className="reveal reveal-2 mx-auto wordmark-shadow relative"
             style={{
               transform: `translate(${heroX}px, ${heroY}px)`,
               transition: 'transform 1.5s cubic-bezier(0.2, 0.8, 0.2, 1)',
@@ -523,15 +536,15 @@ export default function OzsolLanding() {
             </h1>
           </div>
 
-          <div className="reveal reveal-3 mt-12 max-w-3xl mx-auto text-center px-4">
+          <div className="reveal reveal-3 mt-12 max-w-3xl mx-auto text-center px-4 relative">
             <p className="serif italic text-3xl md:text-4xl lg:text-5xl leading-[1.05] opacity-95 wordmark-shadow">
-              Software for industries 
+              Software for industries
               <br className="hidden md:block" />
               that don&apos;t get to fail.
             </p>
           </div>
 
-          <div className="reveal reveal-4 mt-16 mx-auto flex flex-col items-center gap-3">
+          <div className="reveal reveal-4 mt-16 mx-auto flex flex-col items-center gap-3 relative">
             <span className="mono text-[10px] tracking-[0.3em] uppercase opacity-50">Scroll</span>
             <div className="scroll-indicator">
               <svg width="12" height="20" viewBox="0 0 12 20" fill="none">
@@ -697,10 +710,10 @@ export default function OzsolLanding() {
                         Studio
                       </span>
                       <a
-                        href="mailto:hello@ozsol.com.au"
+                        href="mailto:info@ozsol.com.au"
                         className="serif text-2xl md:text-3xl underline-grow"
                       >
-                        hello@ozsol.com.au
+                        info@ozsol.com.au
                       </a>
                     </div>
                     <div>
@@ -727,7 +740,7 @@ export default function OzsolLanding() {
                   <ellipse cx="12" cy="12" rx="10" ry="4" fill="none" stroke="currentColor" strokeWidth="0.6" transform="rotate(120 12 12)" />
                 </svg>
                 <span className="mono text-xs tracking-widest uppercase opacity-60">
-                  Ozsol Pty Ltd · ABN withheld
+                  Ozsol Pty Ltd · ABN 97 618 614 654
                 </span>
               </div>
               <div className="mono text-xs tracking-widest uppercase opacity-60 flex items-center gap-2">
@@ -808,7 +821,6 @@ function Principle({
     </div>
   );
 }
-
 function FactBlock({
   label,
   value,
