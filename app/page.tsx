@@ -22,7 +22,7 @@ export default function OzsolLanding() {
   }, []);
 
   useEffect(() => {
-    const handleMove = (e) => {
+    const handleMove = (e: MouseEvent) => {
       const x = e.clientX / window.innerWidth;
       const y = e.clientY / window.innerHeight;
       setMousePos({ x, y });
@@ -52,7 +52,7 @@ export default function OzsolLanding() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d')!;
     let animationId;
     let rotation = 0;
     let dust = [];
@@ -130,7 +130,7 @@ export default function OzsolLanding() {
       const sinP = Math.sin(tiltY);
 
       // Nucleus positions (originally on x-axis)
-      const project = (lx, ly, lz) => {
+      const project = (lx: number, ly: number, lz: number) => {
         // Yaw rotation around y-axis
         let x1 = lx * cosY + lz * sinY;
         let z1 = -lx * sinY + lz * cosY;
@@ -165,7 +165,10 @@ export default function OzsolLanding() {
       ctx.stroke();
 
       // ---- For each nucleus: draw electron orbital rings + electrons ----
-      const drawNucleus = (nucleus, originLocal) => {
+      const drawNucleus = (
+        nucleus: { x: number; y: number; scale: number; z: number; color: string },
+        originLocal: number[]
+      ) => {
         // Orbital rings — three orbital planes per nucleus
         const ringCount = 3;
         for (let r = 0; r < ringCount; r++) {
@@ -769,7 +772,11 @@ export default function OzsolLanding() {
   );
 }
 
-function DomainCard({ index, kicker, title, body }) {
+function DomainCard({
+  index, kicker, title, body
+}: {
+  index: string; kicker: string; title: string; body: string
+}) {
   return (
     <div className="domain-card p-10 md:p-12 group cursor-default relative">
       <div className="flex items-start justify-between mb-12">
@@ -795,7 +802,7 @@ function DomainCard({ index, kicker, title, body }) {
   );
 }
 
-function Principle({ n, title, body }) {
+function Principle({ n, title, body }: { n: string; title: string; body: string }) {
   return (
     <div className="grid grid-cols-12 gap-4 md:gap-8 group">
       <div className="col-span-2 md:col-span-1">
