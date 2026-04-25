@@ -538,7 +538,7 @@ export default function OzsolLanding() {
 
           <div className="reveal reveal-3 mt-12 max-w-3xl mx-auto text-center px-4 relative">
             <p className="serif italic text-3xl md:text-4xl lg:text-5xl leading-[1.05] opacity-95 wordmark-shadow">
-              Software for industries
+              Software for industries 
               <br className="hidden md:block" />
               that don&apos;t get to fail.
             </p>
