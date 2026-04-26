@@ -70,6 +70,9 @@ export const metadata: Metadata = {
   alternates: {
     canonical: 'https://ozsol.com.au',
   },
+  verification: {
+    google: '<meta name="google-site-verification" content="tN7aMFXxikjJLUht-86-1SrbMaBrfx7OKNheWtwvf1g" />',
+  },
 };
 
 export const viewport: Viewport = {
