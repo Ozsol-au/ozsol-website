@@ -3,23 +3,62 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { ArrowUpRight } from 'lucide-react';
 
+// ============================================================================
+// Tunable physics & interaction constants — all in one place for easy tweaking
+// ============================================================================
+const AUTONOMOUS_RATE = 0.0008;      // baseline rotation per frame (was 0.002)
+const SPRING_STIFFNESS = 0.12;       // higher = snappier return; lower = softer
+const SPRING_DAMPING = 0.82;         // higher = less oscillation; lower = bouncier
+const DRAG_LAG = 0.18;               // lower = more rubbery during drag
+const DRAG_SENSITIVITY_X = 320;      // px sweep for full 360°
+const DRAG_SENSITIVITY_Y = 400;      // px sweep for full pitch (desktop only)
+const VERTICAL_SCROLL_THRESHOLD = 30; // degrees from vertical -> treat as scroll on touch
+const AGITATION_DECAY = 0.92;        // per frame; closer to 1 = slower decay
+const AGITATION_SENSITIVITY = 0.0008; // how much velocity-near-nucleus pumps in
+const AGITATION_RADIUS = 280;        // px — how close cursor needs to be to excite
+
 export default function OzsolLanding() {
   const [mousePos, setMousePos] = useState({ x: 0.5, y: 0.5 });
   const [time, setTime] = useState('');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const heroRef = useRef<HTMLElement | null>(null);
   const mouseRef = useRef({ x: 0.5, y: 0.5 });
+  // Absolute mouse position in pixels, plus velocity tracking
+  const mousePixelRef = useRef({
+    x: 0,
+    y: 0,
+    prevX: 0,
+    prevY: 0,
+    vx: 0,
+    vy: 0,
+  });
 
-  // Drag state — refs so the animation loop reads them without re-renders
+  // Drag + spring state
   const dragStateRef = useRef({
     isDragging: false,
+    isTouchHorizontal: false,    // for touch: true if first move was horizontal-ish
+    captured: false,             // true once we've decided this gesture is for the molecule
     lastX: 0,
-    userYaw: 0,        // current applied yaw offset (added on top of autonomous)
-    userPitch: 0,      // currently always 0 — vertical drag does nothing
-    targetYaw: 0,      // where userYaw is animating toward (0 = home pose)
+    lastY: 0,
+    targetYaw: 0,
     targetPitch: 0,
+    yaw: 0,
+    pitch: 0,
+    velYaw: 0,
+    velPitch: 0,
     cursorOverHero: false,
   });
+
+  // Per-nucleus identity — randomised once on mount, drives the visual
+  // distinction between the two atoms.
+  const nucleiRef = useRef<{
+    ringCount: number;
+    ringPhases: number[];
+    ringDirections: number[];
+    electronOffsets: number[];
+    electronSpeeds: number[];
+    agitation: number;
+  }[]>([]);
 
   useEffect(() => {
     const link = document.createElement('link');
@@ -32,12 +71,40 @@ export default function OzsolLanding() {
     };
   }, []);
 
+  // Initialise per-nucleus randomisation once
+  useEffect(() => {
+    const makeNucleus = () => {
+      const ringCount = Math.random() > 0.5 ? 3 : 2;
+      const ringPhases: number[] = [];
+      const ringDirections: number[] = [];
+      const electronOffsets: number[] = [];
+      const electronSpeeds: number[] = [];
+      for (let i = 0; i < ringCount; i++) {
+        ringPhases.push(Math.random() * Math.PI * 2);
+        ringDirections.push(Math.random() > 0.5 ? 1 : -1);
+        electronOffsets.push(Math.random() * Math.PI * 2);
+        electronSpeeds.push(0.8 + Math.random() * 1.4);
+      }
+      return {
+        ringCount,
+        ringPhases,
+        ringDirections,
+        electronOffsets,
+        electronSpeeds,
+        agitation: 0,
+      };
+    };
+    nucleiRef.current = [makeNucleus(), makeNucleus()];
+  }, []);
+
   useEffect(() => {
     const handleMove = (e: MouseEvent) => {
       const x = e.clientX / window.innerWidth;
       const y = e.clientY / window.innerHeight;
       setMousePos({ x, y });
       mouseRef.current = { x, y };
+      mousePixelRef.current.x = e.clientX;
+      mousePixelRef.current.y = e.clientY;
     };
     window.addEventListener('mousemove', handleMove);
     return () => window.removeEventListener('mousemove', handleMove);
@@ -59,9 +126,7 @@ export default function OzsolLanding() {
     return () => clearInterval(interval);
   }, []);
 
-  // Pointer drag handlers — listen at the window level but only act when the
-  // gesture begins inside the hero section. This avoids capturing clicks on
-  // the nav, links, or anything below the fold.
+  // Pointer drag — supports mouse (desktop free orbit) and touch (diagonal-aware)
   useEffect(() => {
     const isInsideHero = (clientY: number) => {
       const hero = heroRef.current;
@@ -70,49 +135,96 @@ export default function OzsolLanding() {
       return clientY >= rect.top && clientY <= rect.bottom;
     };
 
-    const isOverInteractiveElement = (target: EventTarget | null) => {
-      // Don't start a drag if the gesture began on a link, button, or text
-      // — we want clicks on the contact section and nav to work normally.
+    const isOverInteractive = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) return false;
       return !!target.closest('a, button, [role="button"]');
     };
 
     const onPointerDown = (e: PointerEvent) => {
       if (!isInsideHero(e.clientY)) return;
-      if (isOverInteractiveElement(e.target)) return;
-      dragStateRef.current.isDragging = true;
-      dragStateRef.current.lastX = e.clientX;
-      // While actively dragging, the canvas snaps to user input — kill any
-      // in-progress spring animation back to home.
-      dragStateRef.current.targetYaw = dragStateRef.current.userYaw;
-      // Capture the pointer so we keep getting move events even if the
-      // cursor leaves the hero or window.
-      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-      document.body.style.cursor = 'grabbing';
+      if (isOverInteractive(e.target)) return;
+      const ds = dragStateRef.current;
+      ds.isDragging = true;
+      ds.captured = e.pointerType === 'mouse'; // mouse: capture immediately
+      ds.isTouchHorizontal = false;
+      ds.lastX = e.clientX;
+      ds.lastY = e.clientY;
+      // Halt any in-flight spring animation
+      ds.targetYaw = ds.yaw;
+      ds.targetPitch = ds.pitch;
+      ds.velYaw = 0;
+      ds.velPitch = 0;
+      if (e.pointerType === 'mouse') {
+        document.body.style.cursor = 'grabbing';
+      }
     };
 
     const onPointerMove = (e: PointerEvent) => {
-      // Track hover state for cursor styling, regardless of drag
-      const overHero = isInsideHero(e.clientY) && !isOverInteractiveElement(e.target);
-      dragStateRef.current.cursorOverHero = overHero;
-      if (!dragStateRef.current.isDragging) {
-        document.body.style.cursor = overHero ? 'grab' : '';
+      const ds = dragStateRef.current;
+      const overHero = isInsideHero(e.clientY) && !isOverInteractive(e.target);
+      ds.cursorOverHero = overHero;
+
+      if (!ds.isDragging) {
+        if (e.pointerType === 'mouse') {
+          document.body.style.cursor = overHero ? 'grab' : '';
+        }
         return;
       }
-      const dx = e.clientX - dragStateRef.current.lastX;
-      dragStateRef.current.lastX = e.clientX;
-      // Convert pixel delta to radians. ~400px sweep = full rotation.
-      dragStateRef.current.userYaw += (dx / 400) * Math.PI * 2;
-      dragStateRef.current.targetYaw = dragStateRef.current.userYaw;
+
+      const dx = e.clientX - ds.lastX;
+      const dy = e.clientY - ds.lastY;
+
+      // For touch: decide on first significant movement whether this gesture
+      // is for the molecule or for page scrolling.
+      if (e.pointerType !== 'mouse' && !ds.captured) {
+        const movedEnough = Math.abs(dx) + Math.abs(dy) > 6;
+        if (!movedEnough) return; // wait for clearer signal
+        const angleFromVertical = Math.abs(
+          (Math.atan2(dx, -dy) * 180) / Math.PI
+        );
+        const angleFromVerticalNormalised =
+          angleFromVertical > 90 ? 180 - angleFromVertical : angleFromVertical;
+        if (angleFromVerticalNormalised < VERTICAL_SCROLL_THRESHOLD) {
+          // Pure-ish vertical swipe → scroll the page, abandon drag
+          ds.isDragging = false;
+          return;
+        }
+        ds.captured = true;
+        // Try to capture the pointer so we keep getting events
+        try {
+          (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+        } catch {
+          // ignore
+        }
+      }
+
+      ds.lastX = e.clientX;
+      ds.lastY = e.clientY;
+
+      // Map cursor delta to target rotation. On touch with horizontal-only
+      // intent (swipe was nearly horizontal), don't apply pitch.
+      ds.targetYaw += (dx / DRAG_SENSITIVITY_X) * Math.PI * 2;
+      // Pitch: desktop always; touch only if movement isn't predominantly horizontal.
+      const allowPitch =
+        e.pointerType === 'mouse' || Math.abs(dy) > Math.abs(dx) * 0.4;
+      if (allowPitch) {
+        ds.targetPitch += (dy / DRAG_SENSITIVITY_Y) * Math.PI * 1.2;
+        // Clamp pitch so the molecule can't flip upside down — feels weird
+        ds.targetPitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, ds.targetPitch));
+      }
     };
 
     const onPointerUp = () => {
-      if (!dragStateRef.current.isDragging) return;
-      dragStateRef.current.isDragging = false;
-      // Spring back to home pose
-      dragStateRef.current.targetYaw = 0;
-      dragStateRef.current.targetPitch = 0;
-      document.body.style.cursor = dragStateRef.current.cursorOverHero ? 'grab' : '';
+      const ds = dragStateRef.current;
+      if (!ds.isDragging) return;
+      ds.isDragging = false;
+      ds.captured = false;
+      // Spring back to home pose. Velocity preserved → if user was flicking,
+      // the spring will overshoot more dramatically, which is the "physical"
+      // feel they're after.
+      ds.targetYaw = 0;
+      ds.targetPitch = 0;
+      document.body.style.cursor = ds.cursorOverHero ? 'grab' : '';
     };
 
     window.addEventListener('pointerdown', onPointerDown);
@@ -181,7 +293,15 @@ export default function OzsolLanding() {
       const h = window.innerHeight;
       ctx.clearRect(0, 0, w, h);
 
-      // Atmospheric dust
+      // ----- Mouse velocity tracking (for agitation) -----
+      const mp = mousePixelRef.current;
+      mp.vx = mp.x - mp.prevX;
+      mp.vy = mp.y - mp.prevY;
+      mp.prevX = mp.x;
+      mp.prevY = mp.y;
+      const mouseSpeed = Math.sqrt(mp.vx * mp.vx + mp.vy * mp.vy);
+
+      // ----- Atmospheric dust -----
       const t = performance.now() * 0.001;
       for (const d of dust) {
         d.x += d.vx;
@@ -197,28 +317,37 @@ export default function OzsolLanding() {
         ctx.fill();
       }
 
-      // Spring user-applied tilt back toward target. Easing factor 0.04 →
-      // ~2-3 second decay back to home when user releases.
+      // ----- Spring physics for user-applied rotation -----
       const ds = dragStateRef.current;
-      ds.userYaw += (ds.targetYaw - ds.userYaw) * 0.04;
-      ds.userPitch += (ds.targetPitch - ds.userPitch) * 0.04;
+      if (ds.isDragging) {
+        // Elastic chase — yaw lags toward target with damping
+        ds.yaw += (ds.targetYaw - ds.yaw) * DRAG_LAG;
+        ds.pitch += (ds.targetPitch - ds.pitch) * DRAG_LAG;
+        ds.velYaw = 0;
+        ds.velPitch = 0;
+      } else {
+        // Spring with overshoot — proper damped spring
+        const forceYaw = (ds.targetYaw - ds.yaw) * SPRING_STIFFNESS;
+        const forcePitch = (ds.targetPitch - ds.pitch) * SPRING_STIFFNESS;
+        ds.velYaw = (ds.velYaw + forceYaw) * SPRING_DAMPING;
+        ds.velPitch = (ds.velPitch + forcePitch) * SPRING_DAMPING;
+        ds.yaw += ds.velYaw;
+        ds.pitch += ds.velPitch;
+      }
 
       // Molecule centre — sits above viewport centre so it surrounds the
       // wordmark rather than threading through the gap below it.
       const cx = w / 2;
       const cy = h * 0.45;
 
-      // Mouse parallax tilt — only applied when user is NOT actively
-      // dragging. While dragging, the user is in control of the yaw and
-      // mouse-parallax shouldn't fight them.
+      // Mouse parallax tilt — only when not actively dragging.
       const parallaxYaw = ds.isDragging ? 0 : (mouseRef.current.x - 0.5) * 0.3;
       const parallaxPitch = ds.isDragging ? 0 : (mouseRef.current.y - 0.5) * 0.2;
 
-      // Autonomous rotation continues regardless of user interaction.
-      autonomousRotation += 0.002;
+      autonomousRotation += AUTONOMOUS_RATE;
 
-      const tiltX = ds.userYaw + parallaxYaw;
-      const tiltY = ds.userPitch + parallaxPitch;
+      const tiltX = ds.yaw + parallaxYaw;
+      const tiltY = ds.pitch + parallaxPitch;
 
       const bondLength = Math.min(w, h) * 0.42;
       const baseRadius = Math.min(w, h) * 0.16;
@@ -241,7 +370,25 @@ export default function OzsolLanding() {
       const n1 = project(-bondLength, 0, 0);
       const n2 = project(bondLength, 0, 0);
 
-      // Bond between the two nuclei (double bond — two parallel lines)
+      // ----- Update agitation per nucleus (velocity × proximity) -----
+      const nuclei = nucleiRef.current;
+      if (nuclei.length === 2) {
+        for (let i = 0; i < 2; i++) {
+          const np = i === 0 ? n1 : n2;
+          const dx = mp.x - np.x;
+          const dy = mp.y - np.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const proximity = Math.max(0, 1 - dist / AGITATION_RADIUS);
+          // Pump agitation = velocity × proximity²; squaring proximity makes
+          // the falloff feel localised rather than diffuse.
+          const pump = mouseSpeed * proximity * proximity * AGITATION_SENSITIVITY;
+          nuclei[i].agitation = nuclei[i].agitation * AGITATION_DECAY + pump;
+          // Soft cap to avoid runaway in case of very fast cursor flicks
+          if (nuclei[i].agitation > 1.5) nuclei[i].agitation = 1.5;
+        }
+      }
+
+      // Bond between the two nuclei
       ctx.strokeStyle = 'rgba(186, 230, 253, 0.08)';
       ctx.lineWidth = 1;
       const bondOffset = 10;
@@ -262,17 +409,31 @@ export default function OzsolLanding() {
         color: string;
       };
 
-      const drawNucleus = (nucleus: Nucleus, originLocal: [number, number, number]) => {
-        const ringCount = 3;
+      const drawNucleus = (
+        nucleus: Nucleus,
+        originLocal: [number, number, number],
+        identity: typeof nuclei[number]
+      ) => {
+        const { ringCount, ringPhases, ringDirections, electronOffsets, electronSpeeds, agitation } = identity;
+
+        // Agitation effects: faster electrons, slightly tighter orbits, more
+        // ring brightness. Calm baseline = 1.0; heavily agitated ~ 2.5x.
+        const speedMult = 1 + agitation * 2.5;
+        const radiusContraction = 1 - agitation * 0.18; // tighter at high agitation
+        const ringBrightness = 0.10 + agitation * 0.18;
+        const electronGlow = 1 + agitation * 0.6;
+
         for (let r = 0; r < ringCount; r++) {
           const ringAngle =
-            (Math.PI / ringCount) * r + autonomousRotation * (r === 1 ? -1 : 1);
+            ringPhases[r] +
+            autonomousRotation * ringDirections[r] * (1 + agitation * 0.5);
           const samples = 80;
           ctx.beginPath();
+          const ringRadius = baseRadius * radiusContraction;
           for (let s = 0; s <= samples; s++) {
             const ang = (Math.PI * 2 * s) / samples;
-            const lx = Math.cos(ang) * baseRadius;
-            const ly = Math.sin(ang) * baseRadius * 0.35;
+            const lx = Math.cos(ang) * ringRadius;
+            const ly = Math.sin(ang) * ringRadius * 0.35;
             const rx = lx * Math.cos(ringAngle) - ly * Math.sin(ringAngle);
             const ry = lx * Math.sin(ringAngle) + ly * Math.cos(ringAngle);
             const wx = originLocal[0] + rx;
@@ -281,19 +442,22 @@ export default function OzsolLanding() {
               originLocal[2] +
               (Math.sin(ang) * Math.cos(ringAngle) -
                 Math.cos(ang) * Math.sin(ringAngle)) *
-                baseRadius *
+                ringRadius *
                 0.35;
             const p = project(wx, wy, wz);
             if (s === 0) ctx.moveTo(p.x, p.y);
             else ctx.lineTo(p.x, p.y);
           }
-          ctx.strokeStyle = nucleus.color + ', 0.10)';
+          ctx.strokeStyle = nucleus.color + `, ${ringBrightness})`;
           ctx.lineWidth = 0.6;
           ctx.stroke();
 
-          const electronAng = autonomousRotation * (r + 1) * 1.5 + r * 2;
-          const lx = Math.cos(electronAng) * baseRadius;
-          const ly = Math.sin(electronAng) * baseRadius * 0.35;
+          // Electron travelling around this orbital
+          const electronAng =
+            electronOffsets[r] +
+            autonomousRotation * electronSpeeds[r] * speedMult * (r + 1) * 1.5;
+          const lx = Math.cos(electronAng) * ringRadius;
+          const ly = Math.sin(electronAng) * ringRadius * 0.35;
           const rx = lx * Math.cos(ringAngle) - ly * Math.sin(ringAngle);
           const ry = lx * Math.sin(ringAngle) + ly * Math.cos(ringAngle);
           const wx = originLocal[0] + rx;
@@ -301,13 +465,13 @@ export default function OzsolLanding() {
           const wz = originLocal[2];
           const p = project(wx, wy, wz);
 
-          const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 6 * p.scale);
+          const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 6 * p.scale * electronGlow);
           grad.addColorStop(0, nucleus.color + ', 0.65)');
           grad.addColorStop(0.5, nucleus.color + ', 0.25)');
           grad.addColorStop(1, nucleus.color + ', 0)');
           ctx.fillStyle = grad;
           ctx.beginPath();
-          ctx.arc(p.x, p.y, 6 * p.scale, 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, 6 * p.scale * electronGlow, 0, Math.PI * 2);
           ctx.fill();
 
           ctx.fillStyle = nucleus.color + ', 0.7)';
@@ -316,21 +480,23 @@ export default function OzsolLanding() {
           ctx.fill();
         }
 
+        // Nucleus core glow — slightly brighter when agitated
         const coreRadius = baseRadius * 0.22 * nucleus.scale;
+        const coreIntensity = 1 + agitation * 0.4;
         const coreGrad = ctx.createRadialGradient(
           nucleus.x,
           nucleus.y,
           0,
           nucleus.x,
           nucleus.y,
-          coreRadius * 4
+          coreRadius * 4 * coreIntensity
         );
-        coreGrad.addColorStop(0, nucleus.color + ', 0.4)');
-        coreGrad.addColorStop(0.4, nucleus.color + ', 0.12)');
+        coreGrad.addColorStop(0, nucleus.color + `, ${0.4 * coreIntensity})`);
+        coreGrad.addColorStop(0.4, nucleus.color + `, ${0.12 * coreIntensity})`);
         coreGrad.addColorStop(1, nucleus.color + ', 0)');
         ctx.fillStyle = coreGrad;
         ctx.beginPath();
-        ctx.arc(nucleus.x, nucleus.y, coreRadius * 4, 0, Math.PI * 2);
+        ctx.arc(nucleus.x, nucleus.y, coreRadius * 4 * coreIntensity, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.fillStyle = nucleus.color + ', 0.55)';
@@ -340,14 +506,26 @@ export default function OzsolLanding() {
       };
 
       const pairs = [
-        { proj: n1, local: [-bondLength, 0, 0] as [number, number, number], color: 'rgba(34, 211, 238' },
-        { proj: n2, local: [bondLength, 0, 0] as [number, number, number], color: 'rgba(139, 92, 246' },
+        {
+          proj: n1,
+          local: [-bondLength, 0, 0] as [number, number, number],
+          color: 'rgba(34, 211, 238',
+          identity: nuclei[0],
+        },
+        {
+          proj: n2,
+          local: [bondLength, 0, 0] as [number, number, number],
+          color: 'rgba(139, 92, 246',
+          identity: nuclei[1],
+        },
       ].sort((a, b) => b.proj.z - a.proj.z);
 
       for (const p of pairs) {
+        if (!p.identity) continue;
         drawNucleus(
           { x: p.proj.x, y: p.proj.y, scale: p.proj.scale, z: p.proj.z, color: p.color },
-          p.local
+          p.local,
+          p.identity
         );
       }
 
@@ -912,6 +1090,7 @@ function Principle({
     </div>
   );
 }
+
 function FactBlock({
   label,
   value,
