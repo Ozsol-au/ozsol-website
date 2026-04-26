@@ -912,3 +912,27 @@ function Principle({
     </div>
   );
 }
+function FactBlock({
+  label,
+  value,
+  pulse = false,
+}: {
+  label: string;
+  value: string;
+  pulse?: boolean;
+}) {
+  return (
+    <div>
+      <span className="mono text-[10px] tracking-[0.25em] uppercase opacity-50 block mb-3">
+        {label}
+      </span>
+      <span
+        className={`serif text-4xl md:text-5xl block tracking-tight ${
+          pulse ? 'number-pulse' : ''
+        }`}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
