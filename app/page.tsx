@@ -7,7 +7,19 @@ export default function OzsolLanding() {
   const [mousePos, setMousePos] = useState({ x: 0.5, y: 0.5 });
   const [time, setTime] = useState('');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const heroRef = useRef<HTMLElement | null>(null);
   const mouseRef = useRef({ x: 0.5, y: 0.5 });
+
+  // Drag state — refs so the animation loop reads them without re-renders
+  const dragStateRef = useRef({
+    isDragging: false,
+    lastX: 0,
+    userYaw: 0,        // current applied yaw offset (added on top of autonomous)
+    userPitch: 0,      // currently always 0 — vertical drag does nothing
+    targetYaw: 0,      // where userYaw is animating toward (0 = home pose)
+    targetPitch: 0,
+    cursorOverHero: false,
+  });
 
   useEffect(() => {
     const link = document.createElement('link');
@@ -47,8 +59,76 @@ export default function OzsolLanding() {
     return () => clearInterval(interval);
   }, []);
 
-  // Canvas O2 molecule animation - scaled up and shifted upward to sit
-  // behind the wordmark rather than between wordmark and tagline.
+  // Pointer drag handlers — listen at the window level but only act when the
+  // gesture begins inside the hero section. This avoids capturing clicks on
+  // the nav, links, or anything below the fold.
+  useEffect(() => {
+    const isInsideHero = (clientY: number) => {
+      const hero = heroRef.current;
+      if (!hero) return false;
+      const rect = hero.getBoundingClientRect();
+      return clientY >= rect.top && clientY <= rect.bottom;
+    };
+
+    const isOverInteractiveElement = (target: EventTarget | null) => {
+      // Don't start a drag if the gesture began on a link, button, or text
+      // — we want clicks on the contact section and nav to work normally.
+      if (!(target instanceof HTMLElement)) return false;
+      return !!target.closest('a, button, [role="button"]');
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (!isInsideHero(e.clientY)) return;
+      if (isOverInteractiveElement(e.target)) return;
+      dragStateRef.current.isDragging = true;
+      dragStateRef.current.lastX = e.clientX;
+      // While actively dragging, the canvas snaps to user input — kill any
+      // in-progress spring animation back to home.
+      dragStateRef.current.targetYaw = dragStateRef.current.userYaw;
+      // Capture the pointer so we keep getting move events even if the
+      // cursor leaves the hero or window.
+      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+      document.body.style.cursor = 'grabbing';
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      // Track hover state for cursor styling, regardless of drag
+      const overHero = isInsideHero(e.clientY) && !isOverInteractiveElement(e.target);
+      dragStateRef.current.cursorOverHero = overHero;
+      if (!dragStateRef.current.isDragging) {
+        document.body.style.cursor = overHero ? 'grab' : '';
+        return;
+      }
+      const dx = e.clientX - dragStateRef.current.lastX;
+      dragStateRef.current.lastX = e.clientX;
+      // Convert pixel delta to radians. ~400px sweep = full rotation.
+      dragStateRef.current.userYaw += (dx / 400) * Math.PI * 2;
+      dragStateRef.current.targetYaw = dragStateRef.current.userYaw;
+    };
+
+    const onPointerUp = () => {
+      if (!dragStateRef.current.isDragging) return;
+      dragStateRef.current.isDragging = false;
+      // Spring back to home pose
+      dragStateRef.current.targetYaw = 0;
+      dragStateRef.current.targetPitch = 0;
+      document.body.style.cursor = dragStateRef.current.cursorOverHero ? 'grab' : '';
+    };
+
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+      document.body.style.cursor = '';
+    };
+  }, []);
+
+  // Canvas O2 molecule animation
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -56,7 +136,7 @@ export default function OzsolLanding() {
     if (!ctx) return;
 
     let animationId: number;
-    let rotation = 0;
+    let autonomousRotation = 0;
     type Dust = {
       x: number;
       y: number;
@@ -117,20 +197,29 @@ export default function OzsolLanding() {
         ctx.fill();
       }
 
-      // Molecule centre - sits ABOVE viewport centre so it's behind the
-      // wordmark, not between wordmark and tagline. The wordmark sits at
-      // roughly 45% of viewport height in the hero; place the molecule
-      // there so it surrounds the wordmark.
+      // Spring user-applied tilt back toward target. Easing factor 0.04 →
+      // ~2-3 second decay back to home when user releases.
+      const ds = dragStateRef.current;
+      ds.userYaw += (ds.targetYaw - ds.userYaw) * 0.04;
+      ds.userPitch += (ds.targetPitch - ds.userPitch) * 0.04;
+
+      // Molecule centre — sits above viewport centre so it surrounds the
+      // wordmark rather than threading through the gap below it.
       const cx = w / 2;
       const cy = h * 0.45;
 
-      const tiltX = (mouseRef.current.x - 0.5) * 0.3;
-      const tiltY = (mouseRef.current.y - 0.5) * 0.2;
+      // Mouse parallax tilt — only applied when user is NOT actively
+      // dragging. While dragging, the user is in control of the yaw and
+      // mouse-parallax shouldn't fight them.
+      const parallaxYaw = ds.isDragging ? 0 : (mouseRef.current.x - 0.5) * 0.3;
+      const parallaxPitch = ds.isDragging ? 0 : (mouseRef.current.y - 0.5) * 0.2;
 
-      rotation += 0.002;
+      // Autonomous rotation continues regardless of user interaction.
+      autonomousRotation += 0.002;
 
-      // Larger bond length and orbital radius - molecule envelops the
-      // wordmark area instead of sitting inside the tagline gap.
+      const tiltX = ds.userYaw + parallaxYaw;
+      const tiltY = ds.userPitch + parallaxPitch;
+
       const bondLength = Math.min(w, h) * 0.42;
       const baseRadius = Math.min(w, h) * 0.16;
 
@@ -152,9 +241,7 @@ export default function OzsolLanding() {
       const n1 = project(-bondLength, 0, 0);
       const n2 = project(bondLength, 0, 0);
 
-      // Bond between the two nuclei (double bond - two parallel lines)
-      // Lower opacity since the molecule is now ambient backdrop rather
-      // than focal element.
+      // Bond between the two nuclei (double bond — two parallel lines)
       ctx.strokeStyle = 'rgba(186, 230, 253, 0.08)';
       ctx.lineWidth = 1;
       const bondOffset = 10;
@@ -178,7 +265,8 @@ export default function OzsolLanding() {
       const drawNucleus = (nucleus: Nucleus, originLocal: [number, number, number]) => {
         const ringCount = 3;
         for (let r = 0; r < ringCount; r++) {
-          const ringAngle = (Math.PI / ringCount) * r + rotation * (r === 1 ? -1 : 1);
+          const ringAngle =
+            (Math.PI / ringCount) * r + autonomousRotation * (r === 1 ? -1 : 1);
           const samples = 80;
           ctx.beginPath();
           for (let s = 0; s <= samples; s++) {
@@ -199,12 +287,11 @@ export default function OzsolLanding() {
             if (s === 0) ctx.moveTo(p.x, p.y);
             else ctx.lineTo(p.x, p.y);
           }
-          // Lower opacity so orbital rings are present but not assertive
           ctx.strokeStyle = nucleus.color + ', 0.10)';
           ctx.lineWidth = 0.6;
           ctx.stroke();
 
-          const electronAng = rotation * (r + 1) * 1.5 + r * 2;
+          const electronAng = autonomousRotation * (r + 1) * 1.5 + r * 2;
           const lx = Math.cos(electronAng) * baseRadius;
           const ly = Math.sin(electronAng) * baseRadius * 0.35;
           const rx = lx * Math.cos(ringAngle) - ly * Math.sin(ringAngle);
@@ -214,7 +301,6 @@ export default function OzsolLanding() {
           const wz = originLocal[2];
           const p = project(wx, wy, wz);
 
-          // Slightly smaller, dimmer electrons to reduce focal pull
           const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 6 * p.scale);
           grad.addColorStop(0, nucleus.color + ', 0.65)');
           grad.addColorStop(0.5, nucleus.color + ', 0.25)');
@@ -230,7 +316,6 @@ export default function OzsolLanding() {
           ctx.fill();
         }
 
-        // Nucleus core - softer glow, smaller hard core
         const coreRadius = baseRadius * 0.22 * nucleus.scale;
         const coreGrad = ctx.createRadialGradient(
           nucleus.x,
@@ -459,6 +544,9 @@ export default function OzsolLanding() {
     .content-bg {
       background: linear-gradient(to bottom, transparent 0%, rgba(10, 10, 15, 0.85) 8%, rgba(10, 10, 15, 0.95) 100%);
     }
+    .hero-section {
+      touch-action: pan-y;
+    }
   `;
 
   const heroX = (mousePos.x - 0.5) * 8;
@@ -505,7 +593,10 @@ export default function OzsolLanding() {
           </div>
         </nav>
 
-        <section className="min-h-screen relative flex flex-col justify-center px-8 md:px-16">
+        <section
+          ref={heroRef}
+          className="hero-section min-h-screen relative flex flex-col justify-center px-8 md:px-16"
+        >
           <div className="hidden md:flex absolute left-8 top-1/2 -translate-y-1/2 flex-col items-center gap-4">
             <div className="marker-line h-32"></div>
             <span className="mono text-xs tracking-widest uppercase opacity-50 [writing-mode:vertical-rl] rotate-180">
@@ -517,12 +608,12 @@ export default function OzsolLanding() {
           <div className="hidden md:block absolute right-8 top-1/2 -translate-y-1/2">
             <div className="mono text-xs tracking-widest uppercase opacity-50 [writing-mode:vertical-rl]">
               <span className="opacity-100">●</span>
-              <span className="ml-2">O₂ - Foundational</span>
+              <span className="ml-2">O₂ — Drag to rotate</span>
             </div>
           </div>
 
           <div
-            className="reveal reveal-2 mx-auto wordmark-shadow relative"
+            className="reveal reveal-2 mx-auto wordmark-shadow relative pointer-events-none"
             style={{
               transform: `translate(${heroX}px, ${heroY}px)`,
               transition: 'transform 1.5s cubic-bezier(0.2, 0.8, 0.2, 1)',
@@ -536,7 +627,7 @@ export default function OzsolLanding() {
             </h1>
           </div>
 
-          <div className="reveal reveal-3 mt-12 max-w-3xl mx-auto text-center px-4 relative">
+          <div className="reveal reveal-3 mt-12 max-w-3xl mx-auto text-center px-4 relative pointer-events-none">
             <p className="serif italic text-3xl md:text-4xl lg:text-5xl leading-[1.05] opacity-95 wordmark-shadow">
               Software for industries{' '}
               <br className="hidden md:block" />
@@ -560,7 +651,7 @@ export default function OzsolLanding() {
               <div className="grid grid-cols-12 gap-8">
                 <div className="col-span-12 md:col-span-2">
                   <span className="mono text-xs tracking-widest uppercase opacity-50">
-                    /01 - Premise
+                    /01 — Premise
                   </span>
                 </div>
                 <div className="col-span-12 md:col-span-10">
@@ -574,7 +665,7 @@ export default function OzsolLanding() {
                   <div className="mt-12 grid grid-cols-1 md:grid-cols-2 gap-12 max-w-4xl">
                     <p className="text-lg leading-relaxed opacity-70">
                       Ozsol builds for the second category. Regulated
-                      practice, healthcare, infrastructural data - domains
+                      practice, healthcare, infrastructural data — domains
                       where a missing record is not a metric, it is a
                       person whose case fell through.
                     </p>
@@ -598,7 +689,7 @@ export default function OzsolLanding() {
               <div className="grid grid-cols-12 gap-8 mb-16">
                 <div className="col-span-12 md:col-span-2">
                   <span className="mono text-xs tracking-widest uppercase opacity-50">
-                    /02 - Domains
+                    /02 — Domains
                   </span>
                 </div>
                 <div className="col-span-12 md:col-span-10">
@@ -647,7 +738,7 @@ export default function OzsolLanding() {
               <div className="grid grid-cols-12 gap-8">
                 <div className="col-span-12 md:col-span-2">
                   <span className="mono text-xs tracking-widest uppercase opacity-50">
-                    /03 - Method
+                    /03 — Method
                   </span>
                 </div>
                 <div className="col-span-12 md:col-span-10">
@@ -670,7 +761,7 @@ export default function OzsolLanding() {
                     <Principle
                       n="iv."
                       title="Australia first, by design"
-                      body="Headquartered in Melbourne. Compliant with Australian regulatory frameworks from day one. Data residency is not a setting - it is the default."
+                      body="Headquartered in Melbourne. Compliant with Australian regulatory frameworks from day one. Data residency is not a setting — it is the default."
                     />
                   </div>
                 </div>
@@ -696,7 +787,7 @@ export default function OzsolLanding() {
               <div className="grid grid-cols-12 gap-8">
                 <div className="col-span-12 md:col-span-2">
                   <span className="mono text-xs tracking-widest uppercase opacity-50">
-                    /04 - Contact
+                    /04 — Contact
                   </span>
                 </div>
                 <div className="col-span-12 md:col-span-10">
@@ -745,10 +836,10 @@ export default function OzsolLanding() {
               </div>
               <div className="mono text-xs tracking-widest uppercase opacity-60 flex items-center gap-2">
                 <span className="blink">●</span>
-                <span>System operational - Melbourne {time}</span>
+                <span>System operational — Melbourne {time}</span>
               </div>
               <div className="mono text-xs tracking-widest uppercase opacity-40">
-                © {new Date().getFullYear()} - All ventures reserved
+                © {new Date().getFullYear()} — All ventures reserved
               </div>
             </div>
           </footer>
@@ -818,30 +909,6 @@ function Principle({
           {body}
         </p>
       </div>
-    </div>
-  );
-}
-function FactBlock({
-  label,
-  value,
-  pulse = false,
-}: {
-  label: string;
-  value: string;
-  pulse?: boolean;
-}) {
-  return (
-    <div>
-      <span className="mono text-[10px] tracking-[0.25em] uppercase opacity-50 block mb-3">
-        {label}
-      </span>
-      <span
-        className={`serif text-4xl md:text-5xl block tracking-tight ${
-          pulse ? 'number-pulse' : ''
-        }`}
-      >
-        {value}
-      </span>
     </div>
   );
 }
