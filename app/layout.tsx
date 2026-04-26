@@ -71,7 +71,7 @@ export const metadata: Metadata = {
     canonical: 'https://ozsol.com.au',
   },
   verification: {
-    google: '<meta name="google-site-verification" content="tN7aMFXxikjJLUht-86-1SrbMaBrfx7OKNheWtwvf1g" />',
+    google: 'tN7aMFXxikjJLUht-86-1SrbMaBrfx7OKNheWtwvf1g',
   },
 };
 
