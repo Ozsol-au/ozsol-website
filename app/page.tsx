@@ -370,7 +370,7 @@ export default function OzsolLanding() {
 
       // Molecule centre
       const cx = w / 2;
-      const cy = h * 0.45;
+      const cy = h * 0.43;
 
       const parallaxYaw = ds.isDragging ? 0 : (mouseRef.current.x - 0.5) * 0.3;
       const parallaxPitch = ds.isDragging ? 0 : (mouseRef.current.y - 0.5) * 0.2;
