@@ -370,7 +370,7 @@ export default function OzsolLanding() {
 
       // Molecule centre
       const cx = w / 2;
-      const cy = h * 0.43;
+      const cy = h * 0.45;
 
       const parallaxYaw = ds.isDragging ? 0 : (mouseRef.current.x - 0.5) * 0.3;
       const parallaxPitch = ds.isDragging ? 0 : (mouseRef.current.y - 0.5) * 0.2;
@@ -852,11 +852,9 @@ export default function OzsolLanding() {
             </h1>
           </div>
 
-          <div className="reveal reveal-3 mt-12 max-w-3xl mx-auto text-center px-4 relative pointer-events-none">
+          <div className="reveal reveal-3 mt-12 max-w-5xl mx-auto text-center px-4 relative pointer-events-none">
             <p className="serif italic text-3xl md:text-4xl lg:text-5xl leading-[1.05] opacity-95 wordmark-shadow">
-              Software for industries{' '}
-              <br className="hidden md:block" />
-              that don&apos;t get to fail.
+              Software for industries that don&apos;t get to fail.
             </p>
           </div>
 
