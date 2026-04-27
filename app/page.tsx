@@ -502,7 +502,12 @@ export default function OzsolLanding() {
           const ry = lx * Math.sin(ringAngle) + ly * Math.cos(ringAngle);
           const wx = originLocal[0] + rx;
           const wy = originLocal[1] + ry;
-          const wz = originLocal[2];
+          const wz =
+            originLocal[2] +
+            (Math.sin(electronAng) * Math.cos(ringAngle) -
+              Math.cos(electronAng) * Math.sin(ringAngle)) *
+              ringRadius *
+              0.35;
           const p = projector(wx, wy, wz);
 
           const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 6 * p.scale * electronGlow);
