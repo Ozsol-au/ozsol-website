@@ -4,18 +4,21 @@ import React, { useEffect, useState, useRef } from 'react';
 import { ArrowUpRight } from 'lucide-react';
 
 // ============================================================================
-// Tunable physics & interaction constants — all in one place for easy tweaking
+// Tunable constants — all in one place
 // ============================================================================
-const AUTONOMOUS_RATE = 0.0008;      // baseline rotation per frame (was 0.002)
-const SPRING_STIFFNESS = 0.12;       // higher = snappier return; lower = softer
-const SPRING_DAMPING = 0.82;         // higher = less oscillation; lower = bouncier
-const DRAG_LAG = 0.18;               // lower = more rubbery during drag
-const DRAG_SENSITIVITY_X = 320;      // px sweep for full 360°
-const DRAG_SENSITIVITY_Y = 400;      // px sweep for full pitch (desktop only)
-const VERTICAL_SCROLL_THRESHOLD = 30; // degrees from vertical -> treat as scroll on touch
-const AGITATION_DECAY = 0.92;        // per frame; closer to 1 = slower decay
-const AGITATION_SENSITIVITY = 0.0008; // how much velocity-near-nucleus pumps in
-const AGITATION_RADIUS = 280;        // px — how close cursor needs to be to excite
+const AUTONOMOUS_RATE = 0.0008;
+const SPRING_STIFFNESS = 0.10;       // anchor-frame return spring
+const SPRING_DAMPING = 0.84;
+const NUCLEUS_STIFFNESS = 0.14;      // nuclei chase the anchor frame
+const NUCLEUS_DAMPING = 0.78;        // damping on per-nucleus motion
+const NUCLEUS_LAG_FACTOR = 0.85;     // 0..1 — fraction of anchor each nucleus targets
+const DRAG_LAG = 0.18;
+const DRAG_SENSITIVITY_X = 320;
+const DRAG_SENSITIVITY_Y = 400;
+const VERTICAL_SCROLL_THRESHOLD = 30;
+const AGITATION_DECAY = 0.92;
+const AGITATION_SENSITIVITY = 0.0008;
+const AGITATION_RADIUS = 280;
 
 export default function OzsolLanding() {
   const [mousePos, setMousePos] = useState({ x: 0.5, y: 0.5 });
@@ -23,7 +26,6 @@ export default function OzsolLanding() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const heroRef = useRef<HTMLElement | null>(null);
   const mouseRef = useRef({ x: 0.5, y: 0.5 });
-  // Absolute mouse position in pixels, plus velocity tracking
   const mousePixelRef = useRef({
     x: 0,
     y: 0,
@@ -33,32 +35,45 @@ export default function OzsolLanding() {
     vy: 0,
   });
 
-  // Drag + spring state
+  // The "anchor frame" is the user-applied rotation target. The nuclei
+  // spring toward this anchor, but each independently and with damping —
+  // so during fast motion they visibly lag and oscillate.
   const dragStateRef = useRef({
     isDragging: false,
-    isTouchHorizontal: false,    // for touch: true if first move was horizontal-ish
-    captured: false,             // true once we've decided this gesture is for the molecule
+    isTouchHorizontal: false,
+    captured: false,
     lastX: 0,
     lastY: 0,
-    targetYaw: 0,
-    targetPitch: 0,
-    yaw: 0,
-    pitch: 0,
-    velYaw: 0,
-    velPitch: 0,
+    // Anchor-frame state
+    anchorTargetYaw: 0,
+    anchorTargetPitch: 0,
+    anchorYaw: 0,
+    anchorPitch: 0,
+    anchorVelYaw: 0,
+    anchorVelPitch: 0,
     cursorOverHero: false,
   });
 
-  // Per-nucleus identity — randomised once on mount, drives the visual
-  // distinction between the two atoms.
+  // Each nucleus has its own rotation state, springing toward the anchor.
+  // Nucleus index 0 = left (cyan), 1 = right (violet).
   const nucleiRef = useRef<{
-    ringCount: number;
+    // Identity (set once)
     ringPhases: number[];
     ringDirections: number[];
     electronOffsets: number[];
     electronSpeeds: number[];
+    // Dynamics (per frame)
+    yaw: number;
+    pitch: number;
+    velYaw: number;
+    velPitch: number;
+    // Bond-axis distortion: the projected position can be pushed slightly
+    // off the ideal bond axis by independent dynamics.
     agitation: number;
   }[]>([]);
+
+  // Persisted ring count — same for both nuclei to keep them visually paired.
+  const RING_COUNT = 3;
 
   useEffect(() => {
     const link = document.createElement('link');
@@ -71,26 +86,30 @@ export default function OzsolLanding() {
     };
   }, []);
 
-  // Initialise per-nucleus randomisation once
+  // Initialise per-nucleus randomisation once. Both nuclei have the same
+  // ring count (3) so they look like the same kind of object; everything
+  // else differs so they have independent dynamics and personalities.
   useEffect(() => {
     const makeNucleus = () => {
-      const ringCount = Math.random() > 0.5 ? 3 : 2;
       const ringPhases: number[] = [];
       const ringDirections: number[] = [];
       const electronOffsets: number[] = [];
       const electronSpeeds: number[] = [];
-      for (let i = 0; i < ringCount; i++) {
+      for (let i = 0; i < RING_COUNT; i++) {
         ringPhases.push(Math.random() * Math.PI * 2);
         ringDirections.push(Math.random() > 0.5 ? 1 : -1);
         electronOffsets.push(Math.random() * Math.PI * 2);
         electronSpeeds.push(0.8 + Math.random() * 1.4);
       }
       return {
-        ringCount,
         ringPhases,
         ringDirections,
         electronOffsets,
         electronSpeeds,
+        yaw: 0,
+        pitch: 0,
+        velYaw: 0,
+        velPitch: 0,
         agitation: 0,
       };
     };
@@ -126,7 +145,7 @@ export default function OzsolLanding() {
     return () => clearInterval(interval);
   }, []);
 
-  // Pointer drag — supports mouse (desktop free orbit) and touch (diagonal-aware)
+  // Pointer drag handlers — supports mouse free orbit and touch diagonal-aware
   useEffect(() => {
     const isInsideHero = (clientY: number) => {
       const hero = heroRef.current;
@@ -145,15 +164,14 @@ export default function OzsolLanding() {
       if (isOverInteractive(e.target)) return;
       const ds = dragStateRef.current;
       ds.isDragging = true;
-      ds.captured = e.pointerType === 'mouse'; // mouse: capture immediately
+      ds.captured = e.pointerType === 'mouse';
       ds.isTouchHorizontal = false;
       ds.lastX = e.clientX;
       ds.lastY = e.clientY;
-      // Halt any in-flight spring animation
-      ds.targetYaw = ds.yaw;
-      ds.targetPitch = ds.pitch;
-      ds.velYaw = 0;
-      ds.velPitch = 0;
+      ds.anchorTargetYaw = ds.anchorYaw;
+      ds.anchorTargetPitch = ds.anchorPitch;
+      ds.anchorVelYaw = 0;
+      ds.anchorVelPitch = 0;
       if (e.pointerType === 'mouse') {
         document.body.style.cursor = 'grabbing';
       }
@@ -174,23 +192,19 @@ export default function OzsolLanding() {
       const dx = e.clientX - ds.lastX;
       const dy = e.clientY - ds.lastY;
 
-      // For touch: decide on first significant movement whether this gesture
-      // is for the molecule or for page scrolling.
       if (e.pointerType !== 'mouse' && !ds.captured) {
         const movedEnough = Math.abs(dx) + Math.abs(dy) > 6;
-        if (!movedEnough) return; // wait for clearer signal
+        if (!movedEnough) return;
         const angleFromVertical = Math.abs(
           (Math.atan2(dx, -dy) * 180) / Math.PI
         );
         const angleFromVerticalNormalised =
           angleFromVertical > 90 ? 180 - angleFromVertical : angleFromVertical;
         if (angleFromVerticalNormalised < VERTICAL_SCROLL_THRESHOLD) {
-          // Pure-ish vertical swipe → scroll the page, abandon drag
           ds.isDragging = false;
           return;
         }
         ds.captured = true;
-        // Try to capture the pointer so we keep getting events
         try {
           (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
         } catch {
@@ -201,16 +215,15 @@ export default function OzsolLanding() {
       ds.lastX = e.clientX;
       ds.lastY = e.clientY;
 
-      // Map cursor delta to target rotation. On touch with horizontal-only
-      // intent (swipe was nearly horizontal), don't apply pitch.
-      ds.targetYaw += (dx / DRAG_SENSITIVITY_X) * Math.PI * 2;
-      // Pitch: desktop always; touch only if movement isn't predominantly horizontal.
+      ds.anchorTargetYaw += (dx / DRAG_SENSITIVITY_X) * Math.PI * 2;
       const allowPitch =
         e.pointerType === 'mouse' || Math.abs(dy) > Math.abs(dx) * 0.4;
       if (allowPitch) {
-        ds.targetPitch += (dy / DRAG_SENSITIVITY_Y) * Math.PI * 1.2;
-        // Clamp pitch so the molecule can't flip upside down — feels weird
-        ds.targetPitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, ds.targetPitch));
+        ds.anchorTargetPitch += (dy / DRAG_SENSITIVITY_Y) * Math.PI * 1.2;
+        ds.anchorTargetPitch = Math.max(
+          -Math.PI / 2,
+          Math.min(Math.PI / 2, ds.anchorTargetPitch)
+        );
       }
     };
 
@@ -219,11 +232,8 @@ export default function OzsolLanding() {
       if (!ds.isDragging) return;
       ds.isDragging = false;
       ds.captured = false;
-      // Spring back to home pose. Velocity preserved → if user was flicking,
-      // the spring will overshoot more dramatically, which is the "physical"
-      // feel they're after.
-      ds.targetYaw = 0;
-      ds.targetPitch = 0;
+      ds.anchorTargetYaw = 0;
+      ds.anchorTargetPitch = 0;
       document.body.style.cursor = ds.cursorOverHero ? 'grab' : '';
     };
 
@@ -293,7 +303,7 @@ export default function OzsolLanding() {
       const h = window.innerHeight;
       ctx.clearRect(0, 0, w, h);
 
-      // ----- Mouse velocity tracking (for agitation) -----
+      // Mouse velocity tracking
       const mp = mousePixelRef.current;
       mp.vx = mp.x - mp.prevX;
       mp.vy = mp.y - mp.prevY;
@@ -301,7 +311,7 @@ export default function OzsolLanding() {
       mp.prevY = mp.y;
       const mouseSpeed = Math.sqrt(mp.vx * mp.vx + mp.vy * mp.vy);
 
-      // ----- Atmospheric dust -----
+      // Atmospheric dust
       const t = performance.now() * 0.001;
       for (const d of dust) {
         d.x += d.vx;
@@ -317,61 +327,89 @@ export default function OzsolLanding() {
         ctx.fill();
       }
 
-      // ----- Spring physics for user-applied rotation -----
+      // ----- Anchor-frame physics -----
       const ds = dragStateRef.current;
       if (ds.isDragging) {
-        // Elastic chase — yaw lags toward target with damping
-        ds.yaw += (ds.targetYaw - ds.yaw) * DRAG_LAG;
-        ds.pitch += (ds.targetPitch - ds.pitch) * DRAG_LAG;
-        ds.velYaw = 0;
-        ds.velPitch = 0;
+        // Elastic chase during drag
+        ds.anchorYaw += (ds.anchorTargetYaw - ds.anchorYaw) * DRAG_LAG;
+        ds.anchorPitch += (ds.anchorTargetPitch - ds.anchorPitch) * DRAG_LAG;
+        ds.anchorVelYaw = 0;
+        ds.anchorVelPitch = 0;
       } else {
-        // Spring with overshoot — proper damped spring
-        const forceYaw = (ds.targetYaw - ds.yaw) * SPRING_STIFFNESS;
-        const forcePitch = (ds.targetPitch - ds.pitch) * SPRING_STIFFNESS;
-        ds.velYaw = (ds.velYaw + forceYaw) * SPRING_DAMPING;
-        ds.velPitch = (ds.velPitch + forcePitch) * SPRING_DAMPING;
-        ds.yaw += ds.velYaw;
-        ds.pitch += ds.velPitch;
+        // Damped spring back to home pose with overshoot
+        const fY = (ds.anchorTargetYaw - ds.anchorYaw) * SPRING_STIFFNESS;
+        const fP = (ds.anchorTargetPitch - ds.anchorPitch) * SPRING_STIFFNESS;
+        ds.anchorVelYaw = (ds.anchorVelYaw + fY) * SPRING_DAMPING;
+        ds.anchorVelPitch = (ds.anchorVelPitch + fP) * SPRING_DAMPING;
+        ds.anchorYaw += ds.anchorVelYaw;
+        ds.anchorPitch += ds.anchorVelPitch;
       }
 
-      // Molecule centre — sits above viewport centre so it surrounds the
-      // wordmark rather than threading through the gap below it.
+      // ----- Per-nucleus physics -----
+      // Each nucleus springs toward the anchor frame, but with its own
+      // mass/damping so the two nuclei drift slightly during fast motion
+      // and oscillate independently as they settle.
+      const nuclei = nucleiRef.current;
+      if (nuclei.length === 2) {
+        for (let i = 0; i < 2; i++) {
+          const n = nuclei[i];
+          // Each nucleus has a slightly different effective lag, making the
+          // pair feel like coupled but not identical bodies. Index 0 leads,
+          // index 1 trails by ~10%.
+          const lagFactor = i === 0 ? 1.0 : NUCLEUS_LAG_FACTOR;
+          const targetYaw = ds.anchorYaw * lagFactor;
+          const targetPitch = ds.anchorPitch * lagFactor;
+          const fY = (targetYaw - n.yaw) * NUCLEUS_STIFFNESS;
+          const fP = (targetPitch - n.pitch) * NUCLEUS_STIFFNESS;
+          n.velYaw = (n.velYaw + fY) * NUCLEUS_DAMPING;
+          n.velPitch = (n.velPitch + fP) * NUCLEUS_DAMPING;
+          n.yaw += n.velYaw;
+          n.pitch += n.velPitch;
+        }
+      }
+
+      // Molecule centre
       const cx = w / 2;
       const cy = h * 0.45;
 
-      // Mouse parallax tilt — only when not actively dragging.
       const parallaxYaw = ds.isDragging ? 0 : (mouseRef.current.x - 0.5) * 0.3;
       const parallaxPitch = ds.isDragging ? 0 : (mouseRef.current.y - 0.5) * 0.2;
 
       autonomousRotation += AUTONOMOUS_RATE;
 
-      const tiltX = ds.yaw + parallaxYaw;
-      const tiltY = ds.pitch + parallaxPitch;
-
       const bondLength = Math.min(w, h) * 0.42;
       const baseRadius = Math.min(w, h) * 0.16;
 
-      const cosY = Math.cos(tiltX);
-      const sinY = Math.sin(tiltX);
-      const cosP = Math.cos(tiltY);
-      const sinP = Math.sin(tiltY);
-
-      const project = (lx: number, ly: number, lz: number) => {
-        const x1 = lx * cosY + lz * sinY;
-        const z1 = -lx * sinY + lz * cosY;
-        const y2 = ly * cosP - z1 * sinP;
-        const z2 = ly * sinP + z1 * cosP;
-        const perspective = 1200;
-        const scale = perspective / (perspective + z2);
-        return { x: cx + x1 * scale, y: cy + y2 * scale, scale, z: z2 };
+      // Project a point through a specific nucleus's rotation frame.
+      const makeProjector = (yaw: number, pitch: number) => {
+        const cosY = Math.cos(yaw);
+        const sinY = Math.sin(yaw);
+        const cosP = Math.cos(pitch);
+        const sinP = Math.sin(pitch);
+        return (lx: number, ly: number, lz: number) => {
+          const x1 = lx * cosY + lz * sinY;
+          const z1 = -lx * sinY + lz * cosY;
+          const y2 = ly * cosP - z1 * sinP;
+          const z2 = ly * sinP + z1 * cosP;
+          const perspective = 1200;
+          const scale = perspective / (perspective + z2);
+          return { x: cx + x1 * scale, y: cy + y2 * scale, scale, z: z2 };
+        };
       };
 
-      const n1 = project(-bondLength, 0, 0);
-      const n2 = project(bondLength, 0, 0);
+      // Each nucleus is positioned using its own rotation frame — that's
+      // what makes them visibly independent during fast motion.
+      const n1Frame = nuclei.length === 2
+        ? makeProjector(nuclei[0].yaw + parallaxYaw, nuclei[0].pitch + parallaxPitch)
+        : makeProjector(parallaxYaw, parallaxPitch);
+      const n2Frame = nuclei.length === 2
+        ? makeProjector(nuclei[1].yaw + parallaxYaw, nuclei[1].pitch + parallaxPitch)
+        : makeProjector(parallaxYaw, parallaxPitch);
 
-      // ----- Update agitation per nucleus (velocity × proximity) -----
-      const nuclei = nucleiRef.current;
+      const n1 = n1Frame(-bondLength, 0, 0);
+      const n2 = n2Frame(bondLength, 0, 0);
+
+      // Update per-nucleus agitation (velocity × proximity)
       if (nuclei.length === 2) {
         for (let i = 0; i < 2; i++) {
           const np = i === 0 ? n1 : n2;
@@ -379,26 +417,30 @@ export default function OzsolLanding() {
           const dy = mp.y - np.y;
           const dist = Math.sqrt(dx * dx + dy * dy);
           const proximity = Math.max(0, 1 - dist / AGITATION_RADIUS);
-          // Pump agitation = velocity × proximity²; squaring proximity makes
-          // the falloff feel localised rather than diffuse.
           const pump = mouseSpeed * proximity * proximity * AGITATION_SENSITIVITY;
           nuclei[i].agitation = nuclei[i].agitation * AGITATION_DECAY + pump;
-          // Soft cap to avoid runaway in case of very fast cursor flicks
           if (nuclei[i].agitation > 1.5) nuclei[i].agitation = 1.5;
         }
       }
 
-      // Bond between the two nuclei
+      // Bond between the two nuclei — drawn directly from the projected
+      // positions, so when nuclei are out of phase the bond visibly tilts.
       ctx.strokeStyle = 'rgba(186, 230, 253, 0.08)';
       ctx.lineWidth = 1;
       const bondOffset = 10;
+      // Compute perpendicular offset for the double bond
+      const bx = n2.x - n1.x;
+      const by = n2.y - n1.y;
+      const blen = Math.sqrt(bx * bx + by * by) || 1;
+      const px = (-by / blen) * bondOffset;
+      const py = (bx / blen) * bondOffset;
       ctx.beginPath();
-      ctx.moveTo(n1.x, n1.y - bondOffset);
-      ctx.lineTo(n2.x, n2.y - bondOffset);
+      ctx.moveTo(n1.x + px, n1.y + py);
+      ctx.lineTo(n2.x + px, n2.y + py);
       ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(n1.x, n1.y + bondOffset);
-      ctx.lineTo(n2.x, n2.y + bondOffset);
+      ctx.moveTo(n1.x - px, n1.y - py);
+      ctx.lineTo(n2.x - px, n2.y - py);
       ctx.stroke();
 
       type Nucleus = {
@@ -412,18 +454,17 @@ export default function OzsolLanding() {
       const drawNucleus = (
         nucleus: Nucleus,
         originLocal: [number, number, number],
-        identity: typeof nuclei[number]
+        identity: typeof nuclei[number],
+        projector: (lx: number, ly: number, lz: number) => { x: number; y: number; scale: number; z: number }
       ) => {
-        const { ringCount, ringPhases, ringDirections, electronOffsets, electronSpeeds, agitation } = identity;
+        const { ringPhases, ringDirections, electronOffsets, electronSpeeds, agitation } = identity;
 
-        // Agitation effects: faster electrons, slightly tighter orbits, more
-        // ring brightness. Calm baseline = 1.0; heavily agitated ~ 2.5x.
         const speedMult = 1 + agitation * 2.5;
-        const radiusContraction = 1 - agitation * 0.18; // tighter at high agitation
+        const radiusContraction = 1 - agitation * 0.18;
         const ringBrightness = 0.10 + agitation * 0.18;
         const electronGlow = 1 + agitation * 0.6;
 
-        for (let r = 0; r < ringCount; r++) {
+        for (let r = 0; r < RING_COUNT; r++) {
           const ringAngle =
             ringPhases[r] +
             autonomousRotation * ringDirections[r] * (1 + agitation * 0.5);
@@ -444,7 +485,7 @@ export default function OzsolLanding() {
                 Math.cos(ang) * Math.sin(ringAngle)) *
                 ringRadius *
                 0.35;
-            const p = project(wx, wy, wz);
+            const p = projector(wx, wy, wz);
             if (s === 0) ctx.moveTo(p.x, p.y);
             else ctx.lineTo(p.x, p.y);
           }
@@ -452,7 +493,6 @@ export default function OzsolLanding() {
           ctx.lineWidth = 0.6;
           ctx.stroke();
 
-          // Electron travelling around this orbital
           const electronAng =
             electronOffsets[r] +
             autonomousRotation * electronSpeeds[r] * speedMult * (r + 1) * 1.5;
@@ -463,7 +503,7 @@ export default function OzsolLanding() {
           const wx = originLocal[0] + rx;
           const wy = originLocal[1] + ry;
           const wz = originLocal[2];
-          const p = project(wx, wy, wz);
+          const p = projector(wx, wy, wz);
 
           const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 6 * p.scale * electronGlow);
           grad.addColorStop(0, nucleus.color + ', 0.65)');
@@ -480,7 +520,6 @@ export default function OzsolLanding() {
           ctx.fill();
         }
 
-        // Nucleus core glow — slightly brighter when agitated
         const coreRadius = baseRadius * 0.22 * nucleus.scale;
         const coreIntensity = 1 + agitation * 0.4;
         const coreGrad = ctx.createRadialGradient(
@@ -511,12 +550,14 @@ export default function OzsolLanding() {
           local: [-bondLength, 0, 0] as [number, number, number],
           color: 'rgba(34, 211, 238',
           identity: nuclei[0],
+          projector: n1Frame,
         },
         {
           proj: n2,
           local: [bondLength, 0, 0] as [number, number, number],
           color: 'rgba(139, 92, 246',
           identity: nuclei[1],
+          projector: n2Frame,
         },
       ].sort((a, b) => b.proj.z - a.proj.z);
 
@@ -525,7 +566,8 @@ export default function OzsolLanding() {
         drawNucleus(
           { x: p.proj.x, y: p.proj.y, scale: p.proj.scale, z: p.proj.z, color: p.color },
           p.local,
-          p.identity
+          p.identity,
+          p.projector
         );
       }
 
